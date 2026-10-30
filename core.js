@@ -23,13 +23,22 @@ const roomOf=id=>ROOMS.find(r=>r.id===id);
 const CAT_HOME={stone:"bathroom",tiles:"kitchen",wood:"bedroom",wallpaper:"living",panels:"bedroom",paint:"living",curtains:"lounge",rugs:"lounge",furniture:"lounge"};
 const CAT_REP={stone:"m-calacatta",tiles:"t-zellige-sage",wood:"w-herringbone",wallpaper:"w-deco",panels:"n-oak",paint:"p-terracotta",curtains:"c-midnight",rugs:"r-kilim",furniture:"f-emerald"};
 
+/* heavy texture work runs one piece per idle moment, so it never stacks into a long freeze;
+   a page can hold the queue (e.g. while the intro is writing) */
+let gate=Promise.resolve(), chain=Promise.resolve();
+const idleCb=window.requestIdleCallback?f=>requestIdleCallback(f,{timeout:250}):f=>setTimeout(f,16);
+function slot(){ const p=chain.then(()=>gate).then(()=>new Promise(r=>idleCb(()=>r()))); chain=p; return p; }
+function hold(p){ gate=p; }
+
 /* materials */
 const srcCache=new Map(), imgCache=new Map();
-function loadImg(src){ if(!imgCache.has(src)) imgCache.set(src,new Promise((res,rej)=>{const i=new Image();i.decoding="async";i.onload=()=>res(i);i.onerror=rej;i.src=src})); return imgCache.get(src); }
+function loadImg(src){ if(!imgCache.has(src)) imgCache.set(src,new Promise((res,rej)=>{const i=new Image();i.decoding="async";i.onload=()=>Promise.race([i.decode?i.decode().catch(()=>{}):null,new Promise(r=>setTimeout(r,600))]).then(()=>res(i));i.onerror=rej;i.src=src})); return imgCache.get(src); }
 async function matSource(p,rd){
   const key=p.id+(p.kind===4?"|"+rd.join("x"):"");
   if(srcCache.has(key)) return srcCache.get(key);
-  let s=null; const sp=p.src||{};
+  const sp=p.src||{};
+  // concurrent callers share one generation
+  const job=(async()=>{ if(!sp.img) await slot(); let s=null;
   if(sp.img) s=await loadImg(sp.img);
   else if(sp.bake) s=G.bake(sp.bake);
   else if(sp.terrazzo) s=G.terrazzo(sp.terrazzo);
@@ -37,12 +46,13 @@ async function matSource(p,rd){
   else if(sp.fabric) s=G.fabric(sp.fabric,sp.fabric.length);
   else if(sp.rug) s=G.rug(sp.rug,{w:rd[0],d:rd[1]});
   else if(sp.panel) s=G.panel(sp.panel.wood?await loadImg(sp.panel.wood):null,sp.panel);
-  srcCache.set(key,s); return s;
+  return s; })();
+  srcCache.set(key,job); return job;
 }
 const mk=pid=>{const p=byId[pid];return {pid,tile:p.tile,layout:p.layout,grout:p.grout,groutCol:p.groutCol,book:p.book}};
 async function specFor(engine,a,surf){
   const p=byId[a.pid]; if(!p) return null;
-  const rd=surf?.def?.rug?[surf.def.rug.w,surf.def.rug.d]:[2.3,1.6];
+  const rd=surf?.def?.rug?[surf.def.rug.w,surf.def.rug.d]:[2.6,1.8];
   const s=p.kind===0?null:await matSource(p,rd);
   return {kind:p.kind, tex:s?engine.material(p.id+(p.kind===4?"|"+rd.join("x"):""),s):null, texM:p.kind===4?rd:(p.texM||[1,1]), tile:a.tile||p.tile||[1,1],
     grout:a.grout??p.grout??0, groutCol:hexRGB(a.groutCol||p.groutCol||"#cccccc"), layout:a.layout??p.layout??0, book:a.book??p.book,
@@ -53,16 +63,17 @@ function shade(hex,k){return "#"+hexRGB(hex).map(v=>Math.round(Math.min(1,v*k)*2
 const swCache=new Map();
 async function swatch(p,px=240){
   const key=p.id+"|"+px; if(swCache.has(key)) return swCache.get(key);
+  const job=(async()=>{ await slot();
   const c=document.createElement("canvas"); c.width=c.height=px; const x=c.getContext("2d");
   if(p.kind===0){
     const g=x.createLinearGradient(0,0,px,px); g.addColorStop(0,shade(p.tint,1.05)); g.addColorStop(1,shade(p.tint,.9)); x.fillStyle=g; x.fillRect(0,0,px,px);
   } else if(p.kind===4){
     x.fillStyle="#e9e6e1"; x.fillRect(0,0,px,px);
-    const s=await matSource(p,[2.3,1.6]), w=px*.86, h=w*s.height/s.width;
+    const s=await matSource(p,[2.6,1.8]), w=px*.86, h=w*s.height/s.width;
     x.save(); x.translate(px/2,px/2); x.rotate(-.12); x.shadowColor="rgba(0,0,0,.25)"; x.shadowBlur=px*.06; x.shadowOffsetY=px*.02;
     x.drawImage(s,-w/2,-h/2,w,h); x.restore();
   } else {
-    const s=await matSource(p,[2.3,1.6]), sw=s.naturalWidth||s.width, sh=s.naturalHeight||s.height;
+    const s=await matSource(p,[2.6,1.8]), sw=s.naturalWidth||s.width, sh=s.naturalHeight||s.height;
     if(p.kind===1){ const show=p.src.fabric?.35:p.cat==="wood"?1.2:p.cat==="panels"?.5:.6, f=Math.min(1,show/p.texM[0]); x.drawImage(s,0,0,sw*f,sh*f,0,0,px,px); }
     else {
       const t=p.tile, show=Math.max(.36,Math.min(1.5,Math.max(t[0],t[1])*1.35)), k=px/show, g=Math.max(1,(p.grout||0)*k);
@@ -77,7 +88,8 @@ async function swatch(p,px=240){
     if(p.src.fabric){const g=x.createLinearGradient(0,0,px,0);[0,.2,.4,.6,.8,1].forEach((s0,i)=>g.addColorStop(s0,i%2?"rgba(255,255,255,.12)":"rgba(0,0,0,.18)"));x.fillStyle=g;x.fillRect(0,0,px,px)}
   }
   const l=x.createLinearGradient(0,0,px,px); l.addColorStop(0,"rgba(255,255,255,.08)"); l.addColorStop(1,"rgba(0,0,0,.08)"); x.fillStyle=l; x.fillRect(0,0,px,px);
-  const url=c.toDataURL("image/jpeg",.85); swCache.set(key,url); return url;
+  return new Promise(r=>c.toBlob(b=>r(b?URL.createObjectURL(b):c.toDataURL("image/jpeg",.85)),"image/jpeg",.85)); })();
+  swCache.set(key,job); return job;
 }
 
 /* engine + rooms */
@@ -89,7 +101,8 @@ function rooms(engine){
   async function shot(roomId,assign,q=.86,restore){
     await prep(roomId); engine.use(roomId); const specs={};
     for(const [sid,pid] of Object.entries(assign)){ const surf=engine.surfaces.find(s=>s.id===sid); if(surf) specs[sid]=await specFor(engine,mk(pid),surf); }
-    engine.render(specs); const url=engine.canvas.toDataURL("image/jpeg",q);
+    engine.render(specs);
+    const url=await new Promise(r=>engine.canvas.toBlob(b=>r(b?URL.createObjectURL(b):engine.canvas.toDataURL("image/jpeg",q)),"image/jpeg",q));
     if(restore&&restore!==roomId) engine.use(restore);
     return url;
   }
@@ -102,9 +115,12 @@ function portal(id,fromEl,imgUrl){
   const d=document.createElement("div"); d.className="portal";
   d.innerHTML=`<img alt=""><div class="portal-t"><small>Entering</small><b>${r.name}</b></div>`;
   d.querySelector("img").src=imgUrl||r.src;
+  let keep=imgUrl||"";
+  if(keep.startsWith("blob:")){ try{ const im=fromEl.querySelector("img"), cv=document.createElement("canvas"), w=Math.min(1600,im.naturalWidth);
+    cv.width=w; cv.height=Math.round(im.naturalHeight*w/im.naturalWidth); cv.getContext("2d").drawImage(im,0,0,cv.width,cv.height); keep=cv.toDataURL("image/jpeg",.82); }catch(e){ keep=""; } }
   Object.assign(d.style,{left:b.left+"px",top:b.top+"px",width:b.width+"px",height:b.height+"px"});
   document.body.appendChild(d); void d.offsetWidth; d.classList.add("go");
-  try{ sessionStorage.setItem("portal",JSON.stringify({id,url:imgUrl||""})); }catch(e){}
+  try{ sessionStorage.setItem("portal",JSON.stringify({id,url:keep})); }catch(e){}
   setTimeout(()=>{ location.href="room.html#"+id; }, reduce?50:1050);
 }
 
@@ -140,8 +156,9 @@ function fan(el,pids){
   const n=cards.length; let order=cards.map((_,i)=>i);
   const place=()=>order.forEach((ci,pos)=>{const c=cards[ci], k=pos-(n-1)/2; c.style.setProperty("--k",k); c.style.zIndex=pos});
   place();
-  if(!reduce) setInterval(()=>{ if(!el.isConnected||el.matches(":hover")) return; const top=order.pop(); order.unshift(top); cards[top].classList.add("flip"); place(); setTimeout(()=>cards[top].classList.remove("flip"),700); },2600);
+  let seen=false; new IntersectionObserver(es=>{seen=es[0].isIntersecting}).observe(el);
+  if(!reduce) setInterval(()=>{ if(!seen||document.hidden||el.matches(":hover")) return; const top=order.pop(); order.unshift(top); cards[top].classList.add("flip"); place(); setTimeout(()=>cards[top].classList.remove("flip"),700); },2600);
 }
 
-window.Core={ROOMS,PRODUCTS,CATS,ALLOWED,META,ORDER,CAT_HOME,CAT_REP,byId,catName,hexRGB,reduce,wait,frame,loadImg,mk,specFor,swatch,makeEngine,rooms,portal,buildNav,fan,roomOf};
+window.Core={hold,ROOMS,PRODUCTS,CATS,ALLOWED,META,ORDER,CAT_HOME,CAT_REP,byId,catName,hexRGB,reduce,wait,frame,loadImg,mk,specFor,swatch,makeEngine,rooms,portal,buildNav,fan,roomOf};
 })();

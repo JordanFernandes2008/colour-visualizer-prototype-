@@ -81,27 +81,40 @@ function bake(spec){
   ["A","B","C","D"].forEach(k=>gl.uniform3fv(U("u"+k),hex(spec[k]||"#000000")));
   gl.uniform1f(U("uSeed"),spec.seed||.37); gl.uniform1f(U("uP1"),spec.p1??1); gl.uniform1f(U("uP2"),spec.p2??1); gl.uniform1f(U("uP3"),spec.p3??1);
   gl.drawArrays(gl.TRIANGLES,0,3);
-  const out=document.createElement("canvas"); out.width=out.height=SIZE; out.getContext("2d").drawImage(cv,0,0);
+  const out=document.createElement("canvas"); out.width=out.height=SIZE; out.getContext("2d",{willReadFrequently:true}).drawImage(cv,0,0);
   return out;
 }
 
 /* ---- canvas-drawn materials ---- */
 function rand(seed){let s=seed>>>0||1;return()=>((s=Math.imul(s^s>>>15,1|s)+0x6D2B79F5|0,(s^s>>>7)>>>0)%100000)/100000}
-function canvasOf(){const c=document.createElement("canvas");c.width=c.height=SIZE;return [c,c.getContext("2d")]}
+function canvasOf(){const c=document.createElement("canvas");c.width=c.height=SIZE;return [c,c.getContext("2d",{willReadFrequently:true})]}
 function wrapDraw(fn){for(const dx of [-SIZE,0,SIZE])for(const dy of [-SIZE,0,SIZE])fn(dx,dy)}
+// only repeat a shape across the tile seam when it actually reaches an edge
+function wrapNear(cx,cy,m,fn){const xs=[0],ys=[0];if(cx<m)xs.push(SIZE);if(cx>SIZE-m)xs.push(-SIZE);if(cy<m)ys.push(SIZE);if(cy>SIZE-m)ys.push(-SIZE);for(const dx of xs)for(const dy of ys)fn(dx,dy)}
+const hexToRgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));
+// blend many small rectangles straight into the pixel buffer; spec(o) fills o.x,o.y,o.w,o.h,o.c=[r,g,b],o.a
+function specks(ctx,W,H,count,spec){
+  const img=ctx.getImageData(0,0,W,H), d=img.data, o={x:0,y:0,w:1,h:1,c:null,a:0};
+  for(let i=0;i<count;i++){ spec(o); const a=o.a; if(a<=0) continue;
+    const xa=o.x|0, ya=o.y|0; let xb=(o.x+o.w)|0, yb=(o.y+o.h)|0;
+    if(xb<=xa) xb=xa+1; if(yb<=ya) yb=ya+1;
+    const x0=xa<0?0:xa, y0=ya<0?0:ya, x1=xb>W?W:xb, y1=yb>H?H:yb, cr=o.c[0], cg=o.c[1], cb=o.c[2];
+    for(let y=y0;y<y1;y++){ let p=(y*W+x0)*4;
+      for(let x=x0;x<x1;x++,p+=4){ d[p]+=(cr-d[p])*a; d[p+1]+=(cg-d[p+1])*a; d[p+2]+=(cb-d[p+2])*a; } } }
+  ctx.putImageData(img,0,0);
+}
 
 function terrazzo({base,chips,seed=7,density=1}){
   const [c,x]=canvasOf(), r=rand(seed); x.fillStyle=base; x.fillRect(0,0,SIZE,SIZE);
   // fine aggregate
-  for(let i=0;i<26000*density;i++){x.fillStyle=chips[(r()*chips.length)|0];x.globalAlpha=.25+r()*.4;
-    const px=r()*SIZE,py=r()*SIZE,s=.6+r()*1.6;x.fillRect(px,py,s,s)}
-  x.globalAlpha=1;
+  const crgb=chips.map(hexToRgb);
+  specks(x,SIZE,SIZE,26000*density,o=>{o.c=crgb[(r()*crgb.length)|0];o.a=.25+r()*.4;o.w=o.h=.6+r()*1.6;o.x=r()*SIZE;o.y=r()*SIZE});
   // stone chips: irregular, mostly small, a few larger; slightly translucent edges like ground aggregate
   for(let i=0;i<1400*density;i++){
     const cx=r()*SIZE, cy=r()*SIZE, s=2+Math.pow(r(),3)*15, n=6+((r()*5)|0), col=chips[(r()*chips.length)|0], rot=r()*6.3, el=.55+r()*.45;
     const pts=[...Array(n)].map((_,k)=>{const a=rot+k/n*6.283+(r()-.5)*.7,rr=s*(.45+r()*.6);return [Math.cos(a)*rr,Math.sin(a)*rr*el]});
     x.globalAlpha=.75+r()*.25;
-    wrapDraw((dx,dy)=>{x.beginPath();pts.forEach(([a,b],k)=>x[k?"lineTo":"moveTo"](cx+a+dx,cy+b+dy));x.closePath();x.fillStyle=col;x.fill()});
+    wrapNear(cx,cy,s*1.2+2,(dx,dy)=>{x.beginPath();pts.forEach(([a,b],k)=>x[k?"lineTo":"moveTo"](cx+a+dx,cy+b+dy));x.closePath();x.fillStyle=col;x.fill()});
   }
   x.globalAlpha=1;
   return c;
@@ -141,7 +154,7 @@ function wallpaper(kind,{bg,fg,fg2}){
 
 /* ---- textiles: neutral (light grey) so a product tint gives the colour ---- */
 function fabric(kind,seed=3){
-  const S=512,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d"),r=rand(seed);
+  const S=512,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d",{willReadFrequently:true}),r=rand(seed);
   x.fillStyle="#e6e6e6";x.fillRect(0,0,S,S);
   if(kind==="linen"){ // slubby plain weave
     for(let y=0;y<S;y+=2){x.fillStyle=`rgba(0,0,0,${.03+r()*.07})`;x.fillRect(0,y,S,1)}
@@ -160,9 +173,10 @@ function fabric(kind,seed=3){
 
 /* ---- rugs (alpha marks the footprint; drawn at the rug's aspect ratio) ---- */
 function rug(design,{w=2.3,d=1.6,seed=5}={}){
-  const W=1024,H=Math.round(W*d/w),c=document.createElement("canvas");c.width=W;c.height=H;const x=c.getContext("2d"),r=rand(seed);
+  const W=1024,H=Math.round(W*d/w),c=document.createElement("canvas");c.width=W;c.height=H;const x=c.getContext("2d",{willReadFrequently:true}),r=rand(seed);
   const pad=18;
-  const wool=(alpha=.1)=>{for(let i=0;i<W*H/9;i++){x.fillStyle=r()<.5?`rgba(0,0,0,${r()*alpha})`:`rgba(255,255,255,${r()*alpha})`;x.fillRect(r()*W,r()*H,1+r()*1.5,1+r()*2.5)}};
+  const BLK=[0,0,0],WHT=[255,255,255];
+  const wool=(alpha=.1)=>specks(x,W,H,W*H/9,o=>{o.x=r()*W;o.y=r()*H;o.w=1+r()*1.5;o.h=1+r()*2.5;o.c=r()<.5?BLK:WHT;o.a=r()*alpha});
   x.save();x.beginPath();x.rect(pad,pad,W-2*pad,H-2*pad);x.clip();
   if(design==="atlas"){ // Beni Ourain: cream pile, hand-drawn charcoal lattice
     x.fillStyle="#ece4d5";x.fillRect(0,0,W,H);x.strokeStyle="#3b3836";x.lineWidth=6;x.lineCap="round";
@@ -201,8 +215,8 @@ function rug(design,{w=2.3,d=1.6,seed=5}={}){
   x.restore();
   // handmade finish: abrash (dye-lot bands), pile streaks, a softening pass, then fringe on the short ends
   for(let y=pad;y<H-pad;y+=4+r()*10){x.fillStyle=`rgba(${r()<.5?"40,25,15":"255,245,230"},${r()*.05})`;x.fillRect(pad,y,W-2*pad,3+r()*14)}
-  for(let i=0;i<W*H/40;i++){const px=pad+r()*(W-2*pad),py=pad+r()*(H-2*pad);x.fillStyle=`rgba(0,0,0,${r()*.06})`;x.fillRect(px,py,1,2+r()*4)}
-  const soft=document.createElement("canvas");soft.width=W;soft.height=H;const sx=soft.getContext("2d");sx.filter="blur(.7px)";sx.drawImage(c,0,0);
+  specks(x,W,H,W*H/40,o=>{o.x=pad+r()*(W-2*pad);o.y=pad+r()*(H-2*pad);o.w=1;o.h=2+r()*4;o.c=BLK;o.a=r()*.06});
+  const soft=document.createElement("canvas");soft.width=W;soft.height=H;const sx=soft.getContext("2d",{willReadFrequently:true});sx.filter="blur(.7px)";sx.drawImage(c,0,0);
   x.clearRect(0,0,W,H);x.drawImage(soft,0,0);
   x.strokeStyle="rgba(236,228,214,.95)";x.lineWidth=1.6;
   for(const yEdge of [pad,H-pad]){const dir=yEdge===pad?-1:1;for(let xx=pad+3;xx<W-pad;xx+=4){x.globalAlpha=.6+r()*.4;x.beginPath();x.moveTo(xx,yEdge);x.lineTo(xx+(r()-.5)*3,yEdge+dir*(pad-1)*(.6+r()*.4));x.stroke()}}
@@ -212,7 +226,7 @@ function rug(design,{w=2.3,d=1.6,seed=5}={}){
 
 /* ---- slatted / fluted wall panels from a wood photo (or a flat paint) ---- */
 function panel(woodImg,{slat=26,gap=8,tint=null,flat=null,fluted=false}={}){
-  const S=1024,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d");
+  const S=1024,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d",{willReadFrequently:true});
   x.fillStyle="#141210";x.fillRect(0,0,S,S);
   const n=Math.floor(S/(slat+gap)), sw=S/n-gap;
   for(let i=0;i<n;i++){const x0=i*(S/n)+gap/2;

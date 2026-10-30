@@ -9,20 +9,35 @@ if(!engine){ document.body.classList.remove("is-loading"); $("intro").classList.
 const R=C.rooms(engine);
 const looks={}, alts={};          // rendered JPEGs per room
 
-/* ---------- intro: "hi" → "this is our prototype" → site ---------- */
-const intro=$("intro"); let skip=false;
-$("introSkip").onclick=()=>skip=true; intro.addEventListener("click",()=>skip=true);
+/* ---------- intro: "Hi" → "this is our prototype" → site ----------
+   Plays on a fresh open or a refresh only; coming back from a room page goes straight to the site.
+   Skip ends it at once, and loading carries on behind the page. */
+const intro=$("intro"); let skip=false, lifted=false;
+const nav=performance.getEntriesByType("navigation")[0]?.type;
+const fromSite=document.referrer&&new URL(document.referrer).origin===location.origin;
+const playIntro=nav==="reload"||(nav!=="back_forward"&&!fromSite);
+function lift(instant){
+  if(lifted) return; lifted=true; releaseQueue&&releaseQueue();
+  if(instant){ intro.classList.add("gone"); }
+  else { intro.classList.add("lift"); setTimeout(()=>intro.classList.add("gone"),1200); }
+  document.body.classList.remove("is-loading"); document.body.classList.add("ready");
+}
+// keep texture work away from the "Hi" handwriting; released once the room work begins
+let releaseQueue; C.hold(new Promise(r=>releaseQueue=r));
+const skipNow=e=>{ e&&e.stopPropagation(); skip=true; lift(false); };
+$("introSkip").addEventListener("click",skipNow); intro.addEventListener("click",skipNow);
 async function introSeq(work){
   const bar=$("introBar"), prog=k=>bar.style.width=Math.round(k*100)+"%";
+  if(!playIntro){ releaseQueue(); lift(true); await work(()=>{}); return; }
   const until=async ms=>{const t=performance.now(); while(performance.now()-t<ms&&!skip) await wait(50)};
   await wait(60); intro.classList.add("draw");
   await until(reduce?300:2600);
-  intro.classList.add("hi-out"); await until(reduce?100:650);
-  intro.classList.add("say"); await wait(skip?0:1300);
+  if(!skip){ intro.classList.add("hi-out"); await until(reduce?100:650); }
+  if(!skip){ intro.classList.add("say"); await until(1300); }
+  releaseQueue();
   await work(prog);                 // heavy work starts once the writing is done, so it never stutters
-  prog(1); await wait(skip?0:450);
-  intro.classList.add("lift"); document.body.classList.remove("is-loading"); document.body.classList.add("ready");
-  setTimeout(()=>intro.classList.add("gone"),1200);
+  prog(1); if(!skip) await wait(450);
+  lift(false);
 }
 
 /* ---------- hero: the lounge keeps changing ---------- */
@@ -41,11 +56,15 @@ async function buildHero(){
   $("heroA").src=heroFrames[0].url; setNow(heroFrames[0].v);
 }
 function setNow(v){ $("nowText").textContent=label(v); C.swatch(byId[Object.values(v)[0]],80).then(u=>document.querySelector(".now-sw").style.backgroundImage=`url(${u})`); }
+let heroOn=true;
+new IntersectionObserver(es=>{heroOn=es[0].isIntersecting}).observe($("hero"));
 async function runHero(){
   const a=$("heroA"), b=$("heroB"), ring=$("nowProg"); let i=0; const D=reduce?1:1500, HOLD=3600;
   while(true){
-    const t0=performance.now();
-    while(performance.now()-t0<HOLD){ ring.style.strokeDashoffset=1-(performance.now()-t0)/HOLD; await frame(); }
+    let held=0, last=performance.now();
+    while(held<HOLD){
+      if(!heroOn||document.hidden){ await wait(300); last=performance.now(); continue; }   // nothing to animate off-screen
+      await frame(); const n=performance.now(); held+=n-last; last=n; ring.style.strokeDashoffset=1-held/HOLD; }
     i=(i+1)%heroFrames.length; const f=heroFrames[i];
     b.src=f.url; await b.decode().catch(()=>{});
     $("nowText").style.opacity=0; setTimeout(()=>{setNow(f.v);$("nowText").style.opacity=1},500);
@@ -78,16 +97,26 @@ function buildStore(){
   end.innerHTML=`<h3>Five rooms.<br>Sixty-two products.</h3><a class="btn btn-dark" href="#rooms">Pick a room</a>`; track.appendChild(end);
 }
 function fillBay(id){ const b=bayImgs[id]; if(!b) return; const [i1,i2]=b.querySelectorAll("img"); i1.src=looks[id]; i2.src=alts[id]; b.classList.add("loaded"); }
-function storeScroll(){
+let geo=null, lastK=-1;
+function measureStore(){
   const sec=$("store"), track=$("track");
+  geo={top:sec.offsetTop, total:sec.offsetHeight-innerHeight, max:track.scrollWidth-innerWidth,
+    bays:[...track.querySelectorAll(".bay")].map(b=>({b,imgs:[...b.querySelectorAll(".bay-img img")],mid:b.offsetLeft+b.offsetWidth/2}))};
+  lastK=-1;
+}
+function storeScroll(){
+  const track=$("track");
   if(innerWidth<=760){ track.style.transform=""; return; }
-  const r=sec.getBoundingClientRect(), total=sec.offsetHeight-innerHeight;
-  const k=Math.min(1,Math.max(0,-r.top/total)), max=track.scrollWidth-innerWidth;
-  track.style.transform=`translate3d(${-k*max}px,0,0)`;
+  if(!geo) measureStore();
+  const k=Math.min(1,Math.max(0,(scrollY-geo.top)/geo.total));
+  if(k===lastK) return; lastK=k;                       // outside the store nothing changes
+  const shift=k*geo.max;
+  track.style.transform=`translate3d(${-shift}px,0,0)`;
   $("meter").style.width=(k*100)+"%";
   $("aisleNo").textContent=String(Math.min(5,1+Math.floor(k*5))).padStart(2,"0");
-  track.querySelectorAll(".bay").forEach(b=>{const br=b.getBoundingClientRect(), c=(br.left+br.width/2-innerWidth/2)/innerWidth;
-    b.querySelectorAll(".bay-img img").forEach(im=>im.style.transform=`translateX(${c*-6}%) scale(1.06)`); b.style.transform=`translateY(${Math.abs(c)*30}px) scale(${1-Math.min(.06,Math.abs(c)*.06)})`});
+  for(const g of geo.bays){ const c=(g.mid-shift-innerWidth/2)/innerWidth;
+    for(const im of g.imgs) im.style.transform=`translateX(${c*-6}%) scale(1.06)`;
+    g.b.style.transform=`translateY(${Math.abs(c)*30}px) scale(${1-Math.min(.06,Math.abs(c)*.06)})`; }
 }
 function cursorBubble(){
   const cur=$("cursor"); if(matchMedia("(hover:none)").matches) return;
@@ -136,15 +165,16 @@ function magnets(){
 /* ---------- boot ---------- */
 let ticking=false;
 addEventListener("scroll",()=>{if(!ticking){ticking=true;requestAnimationFrame(()=>{storeScroll();ticking=false})}},{passive:true});
-addEventListener("resize",storeScroll);
+addEventListener("resize",()=>{geo=null;storeScroll()});
 addEventListener("pageshow",e=>{ if(e.persisted) document.querySelectorAll(".portal").forEach(p=>p.remove()); });
 (async()=>{
   C.buildNav(); splitRise(); cursorBubble(); buildStore(); buildDoors(); magnets();
+  $("heroA").src=roomOf("lounge").src;      // the plain room shows until the first render is ready
   await introSeq(async prog=>{ await R.prep("lounge"); prog(.4); await buildHero(); prog(.9); });
   runHero(); storeScroll();
   for(const id of ORDER){
     looks[id]=await R.shot(id,META[id].look,.84); alts[id]=await R.shot(id,META[id].alt,.84);
-    fillBay(id); fillDoor(id); await wait(60);
+    fillBay(id); fillDoor(id); await new Promise(r=>(window.requestIdleCallback||setTimeout)(r,{timeout:400}));
   }
   buildHow();
 })();

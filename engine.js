@@ -8,6 +8,21 @@
 "use strict";
 
 /* ---------------- maths ---------------- */
+// one-point-perspective camera helper (units: image widths; y down)
+function Cam(c){ // {cx, cy, f, h}
+  const P=(X,Y,Z)=>[c.cx+X*c.f/Z, c.cy-(Y-c.h)*c.f/Z];
+  return {
+    floor:(x0,x1,z0,z1)=>({img:[P(x0,0,z1),P(x1,0,z1),P(x1,0,z0),P(x0,0,z0)], world:[[x0,z1],[x1,z1],[x1,z0],[x0,z0]].map(([x,z])=>[x,-z])}),
+    back:(D,x0,x1,y0,y1)=>({img:[P(x0,y1,D),P(x1,y1,D),P(x1,y0,D),P(x0,y0,D)], world:[[x0,-y1],[x1,-y1],[x1,-y0],[x0,-y0]]}),
+    side:(X,z0,z1,y0,y1)=>{ const s=Math.sign(X)||1;
+      return {img:[P(X,y1,z0),P(X,y1,z1),P(X,y0,z1),P(X,y0,z0)], world:[[s*z0,-y1],[s*z1,-y1],[s*z1,-y0],[s*z0,-y0]]}; }
+  };
+}
+
+/* ---------------- room preparation kernel ----------------
+   Self-contained so the same code runs in a Web Worker (keeps the page smooth) or, as a fallback, on the page. */
+function KERNEL(){
+"use strict";
 // homography mapping 4 src points -> 4 dst points (returns 3x3 row-major)
 function homography(src, dst){
   const A=[], b=[];
@@ -27,16 +42,6 @@ function homography(src, dst){
   return [h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7],1];
 }
 
-// one-point-perspective camera helper (units: image widths; y down)
-function Cam(c){ // {cx, cy, f, h}
-  const P=(X,Y,Z)=>[c.cx+X*c.f/Z, c.cy-(Y-c.h)*c.f/Z];
-  return {
-    floor:(x0,x1,z0,z1)=>({img:[P(x0,0,z1),P(x1,0,z1),P(x1,0,z0),P(x0,0,z0)], world:[[x0,z1],[x1,z1],[x1,z0],[x0,z0]].map(([x,z])=>[x,-z])}),
-    back:(D,x0,x1,y0,y1)=>({img:[P(x0,y1,D),P(x1,y1,D),P(x1,y0,D),P(x0,y0,D)], world:[[x0,-y1],[x1,-y1],[x1,-y0],[x0,-y0]]}),
-    side:(X,z0,z1,y0,y1)=>{ const s=Math.sign(X)||1;
-      return {img:[P(X,y1,z0),P(X,y1,z1),P(X,y0,z1),P(X,y0,z0)], world:[[s*z0,-y1],[s*z1,-y1],[s*z1,-y0],[s*z0,-y0]]}; }
-  };
-}
 
 /* ---------------- image processing (CPU, once per room) ---------------- */
 function boxBlur(src, W, H, r){ // separable running-sum box blur, Float32
@@ -64,7 +69,7 @@ function guided(I, p, W, H, r, eps){
 }
 
 function rasterPolys(W,H,polys){ // normalised polygons -> Uint8 coverage
-  const c=document.createElement("canvas"); c.width=W; c.height=H;
+  const c=typeof OffscreenCanvas!=="undefined"?new OffscreenCanvas(W,H):Object.assign(document.createElement("canvas"),{width:W,height:H});
   const x=c.getContext("2d"); x.fillStyle="#fff";
   for(const p of polys){ x.beginPath(); p.forEach(([u,v],k)=>x[k?"lineTo":"moveTo"](u*W,v*H)); x.closePath(); x.fill(); }
   const d=x.getImageData(0,0,W,H).data, m=new Float32Array(W*H);
@@ -103,6 +108,135 @@ function growMask(S, seeds, clip){
   return mask;
 }
 
+
+function refColour(rgb,m,N,pct=.7){
+  const L=[]; for(let i=0;i<N;i+=5) if(m[i]>.5) L.push([.2126*rgb[i*3]+.7152*rgb[i*3+1]+.0722*rgb[i*3+2],i]);
+  if(!L.length) return [.8,.8,.8];
+  L.sort((a,b)=>a[0]-b[0]);
+  const lo=Math.floor(L.length*(pct-.1)), hi=Math.max(lo+1,Math.floor(L.length*(pct+.1)));
+  let r=0,g=0,b=0; for(let k=lo;k<hi;k++){const i=L[k][1];r+=rgb[i*3];g+=rgb[i*3+1];b+=rgb[i*3+2];}
+  const n=hi-lo; return [r/n,g/n,b/n];
+}
+
+function computeRoom({px,W,H,surfaces:defs}){
+  const room={surfaces:defs};
+    const N=W*H, rgb=new Float32Array(N*3), Lum=new Float32Array(N);
+    for(let i=0;i<N;i++){ rgb[i*3]=px[i*4]/255; rgb[i*3+1]=px[i*4+1]/255; rgb[i*3+2]=px[i*4+2]/255;
+      Lum[i]=.2126*rgb[i*3]+.7152*rgb[i*3+1]+.0722*rgb[i*3+2]; }
+    // edge map for wall growth
+    const edge=new Uint8Array(N);
+    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;
+      const gx=Lum[i-W+1]+2*Lum[i+1]+Lum[i+W+1]-Lum[i-W-1]-2*Lum[i-1]-Lum[i+W-1];
+      const gy=Lum[i+W-1]+2*Lum[i+W]+Lum[i+W+1]-Lum[i-W-1]-2*Lum[i-W]-Lum[i-W+1];
+      edge[i]=Math.hypot(gx,gy)>.13?1:0;}
+    const S={W,H,rgb,edge};
+    
+
+    
+    const surfaces=[];
+    const shadeRGB=new Float32Array(N*3), shadeA=new Float32Array(N), owner=new Float32Array(N);
+    for(const sd of room.surfaces){
+      // 1. coverage
+      let m=rasterPolys(W,H,sd.poly);
+      if(sd.grow){ const g=growMask(S,sd.grow,m); for(let i=0;i<N;i++) m[i]=Math.min(m[i],g[i]);
+        // close the thin rim of old wall left beside objects: take neighbouring pixels that really are wall-coloured
+        const wr=refColour(rgb,m,N), wl=.2126*wr[0]+.7152*wr[1]+.0722*wr[2], ws=wr[0]+wr[1]+wr[2]+1e-3;
+        for(let pass=0;pass<5;pass++){ const add=[];
+          for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x; if(m[i]>.5) continue;
+            if(!(m[i-1]>.5||m[i+1]>.5||m[i-W]>.5||m[i+W]>.5)) continue;
+            const r=rgb[i*3],g2=rgb[i*3+1],b=rgb[i*3+2],s=r+g2+b+1e-3;
+            if(Math.abs(r/s-wr[0]/ws)+Math.abs(g2/s-wr[1]/ws)<.025&&Math.abs(Lum[i]-wl)<.09) add.push(i);}
+          for(const i of add) m[i]=1; }
+      }
+      if(sd.holes){ const h=rasterPolys(W,H,sd.holes); for(let i=0;i<N;i++) m[i]*=1-h[i]; }
+      // reference colour = bright-ish median of the surface
+      let ref=refColour(rgb,m,N);
+      if(sd.keyAt){ // sample the key colour from points known to be the material itself
+        let r=0,g=0,b=0,n=0;
+        for(const [u,v] of sd.keyAt){ const cx=Math.round(u*(W-1)),cy=Math.round(v*(H-1));
+          for(let y=-3;y<=3;y++)for(let x=-3;x<=3;x++){const i=Math.min(H-1,Math.max(0,cy+y))*W+Math.min(W-1,Math.max(0,cx+x));r+=rgb[i*3];g+=rgb[i*3+1];b+=rgb[i*3+2];n++} }
+        ref=[r/n,g/n,b/n];
+      }
+      if(sd.fine){ // colour-keyed occluders: keep pixels that still look like the surface
+        const f=rasterPolys(W,H,sd.fine), rl=.2126*ref[0]+.7152*ref[1]+.0722*ref[2];
+        for(let i=0;i<N;i++) if(f[i]>0&&m[i]>0){
+          const r=rgb[i*3],g=rgb[i*3+1],b=rgb[i*3+2],L=Lum[i], s=r+g+b+1e-3, rs=ref[0]+ref[1]+ref[2]+1e-3;
+          const dc=Math.abs(r/s-ref[0]/rs)+Math.abs(g/s-ref[1]/rs);
+          const keep=dc<(sd.tol||.05)&&L>rl*.28&&L<rl*(sd.lmax||1.4);
+          if(!keep) m[i]=0;
+        }
+      }
+      
+      // 2. edge-aware refine
+      if(sd.guided!==false){
+        const q=guided(Lum,m,W,H,sd.r||3,sd.eps||4e-4);
+        for(let i=0;i<N;i++){ const v=q[i]; m[i]=v<=.25?0:v>=.75?1:(v-.25)*2; }
+      }
+      if(sd.clip!==false){ const hard=rasterPolys(W,H,sd.poly.map(p=>p)); for(let i=0;i<N;i++) m[i]*=Math.min(1,hard[i]*1.0001); }
+      // cut-outs win over edge snapping (white objects on white walls must not be painted)
+      if(sd.holes){ const h=rasterPolys(W,H,sd.holes); for(let i=0;i<N;i++) m[i]*=1-h[i]; }
+      // surfaces in front of this one (curtains over a wall) are removed by their real mask, not a polygon
+      for(const id of sd.minus||[]){ const o=surfaces.find(s=>s.id===id); if(o) for(let i=0;i<N;i++) m[i]*=1-o.maskBytes[i]/255; }
+      // a placed object (e.g. a new rug) only shows where its host surface is visible
+      const host=sd.intersect&&surfaces.find(s=>s.id===sd.intersect);
+      if(host) for(let i=0;i<N;i++) m[i]*=host.maskBytes[i]/255;
+      
+      if(host){ // shares the host's lighting
+        const maskBytes=new Uint8Array(N); for(let i=0;i<N;i++) maskBytes[i]=Math.round(m[i]*255);
+        const Hm=homography(sd.quad.img.map(([u,v])=>[u*W, v*(sd.quad.units==="w"?W:H)]), sd.quad.world);
+        surfaces.push({id:sd.id, maskBytes, ref:host.ref, H:Hm, area:0});
+        continue;
+      }
+      // 3. lighting: masked normalised blur (removes old texture/grout, keeps light & shadow)
+      const R=Math.max(4,Math.round(W*(sd.blur||(sd.type==="floor"?.007:.011))));
+      const mm=new Float32Array(N); for(let i=0;i<N;i++) mm[i]=m[i]>.5?1:0;
+      const mB=blur3(mm,W,H,R);
+      const ch=[0,1,2].map(k=>{const a=new Float32Array(N);for(let i=0;i<N;i++)a[i]=rgb[i*3+k]*mm[i];return blur3(a,W,H,R)});
+      for(let i=0;i<N;i++) if(m[i]>owner[i]){
+        const w=mB[i]>1e-4?1/mB[i]:0; owner[i]=m[i];
+        const r=ch[0][i]*w,g=ch[1][i]*w,b=ch[2][i]*w; shadeRGB[i*3]=r;shadeRGB[i*3+1]=g;shadeRGB[i*3+2]=b;
+        const bl=.2126*r+.7152*g+.0722*b; shadeA[i]=bl>1e-3?Math.min(1,Lum[i]/bl*.5):.5;
+      }
+      // reference light = 70th percentile of the blurred surface colour
+      const lref=refColour(shadeRGB,mm,N,.7);
+      const maskBytes=new Uint8Array(N); for(let i=0;i<N;i++) maskBytes[i]=Math.round(m[i]*255);
+      const Hm=homography(sd.quad.img.map(([u,v])=>[u*W, v*(sd.quad.units==="w"?W:H)]), sd.quad.world);
+      surfaces.push({id:sd.id, maskBytes, ref:lref, H:Hm, area:mm.reduce((a,b)=>a+b,0)/N});
+      
+    }
+    const shadeBytes=new Uint8Array(N*4);
+    for(let i=0;i<N;i++){ for(let k=0;k<3;k++) shadeBytes[i*4+k]=Math.round(Math.min(1,shadeRGB[i*3+k])*255); shadeBytes[i*4+3]=Math.round(shadeA[i]*255); }
+
+
+  return {shadeBytes,surfaces};
+}
+return {homography,computeRoom};
+}
+const KR=KERNEL(), homography=KR.homography;
+// one worker for all rooms; jobs are answered in order
+let worker=null, jobs=new Map(), jobId=0;
+function kernelWorker(){
+  if(worker!==null) return worker;
+  try{
+    if(typeof Worker==="undefined"||typeof OffscreenCanvas==="undefined") throw 0;
+    const src="const K=("+KERNEL.toString()+")();onmessage=e=>{const {id,job}=e.data;try{if(job.bmp){const oc=new OffscreenCanvas(job.W,job.H),x=oc.getContext('2d',{willReadFrequently:true});x.drawImage(job.bmp,0,0,job.W,job.H);job.px=x.getImageData(0,0,job.W,job.H).data;job.bmp.close();delete job.bmp}const r=K.computeRoom(job);postMessage({id,r},[r.shadeBytes.buffer,...r.surfaces.map(s=>s.maskBytes.buffer)])}catch(err){postMessage({id,err:String(err&&err.message||err)})}}";
+    worker=new Worker(URL.createObjectURL(new Blob([src],{type:"text/javascript"})));
+    worker.onmessage=e=>{const j=jobs.get(e.data.id); jobs.delete(e.data.id); if(!j) return; e.data.err?j.reject(new Error(e.data.err)):j.resolve(e.data.r)};
+    worker.onerror=()=>{ for(const j of jobs.values()) j.fallback(); jobs.clear(); worker=false; };
+  }catch(e){ worker=false; }
+  return worker;
+}
+// job: {W,H,surfaces,canvas} — the page canvas already holds the scaled photo
+const pixelsOf=job=>job.canvas.getContext("2d",{willReadFrequently:true}).getImageData(0,0,job.W,job.H).data;
+async function computeRoom(job){
+  const w=kernelWorker(), onPage=()=>KR.computeRoom({W:job.W,H:job.H,surfaces:job.surfaces,px:pixelsOf(job)});
+  if(!w||typeof createImageBitmap==="undefined") return onPage();
+  const bmp=await Promise.race([createImageBitmap(job.canvas).catch(()=>null),new Promise(r=>setTimeout(()=>r(null),1500))]);
+  if(!bmp) return onPage();
+  return new Promise((resolve,reject)=>{ const id=++jobId;
+    jobs.set(id,{resolve,reject,fallback:()=>{try{resolve(onPage())}catch(e){reject(e)}}});
+    w.postMessage({id,job:{W:job.W,H:job.H,surfaces:job.surfaces,bmp}},[bmp]); });
+}
 /* ---------------- GL ---------------- */
 const VS=`#version 300 es
 in vec2 aP; out vec2 vUV;
@@ -236,99 +370,15 @@ class Engine{
   }
 
   /* prepare a room: masks, lighting, homographies */
+  compute(job){ return computeRoom(job); }
   async loadRoom(room, img, maxSide=1500){
     const sc=Math.min(1,maxSide/Math.max(img.naturalWidth,img.naturalHeight));
     const W=Math.round(img.naturalWidth*sc), H=Math.round(img.naturalHeight*sc);
     const c=document.createElement("canvas"); c.width=W; c.height=H;
     const cx=c.getContext("2d",{willReadFrequently:true}); cx.drawImage(img,0,0,W,H);
-    const px=cx.getImageData(0,0,W,H).data;
-    const N=W*H, rgb=new Float32Array(N*3), Lum=new Float32Array(N);
-    for(let i=0;i<N;i++){ rgb[i*3]=px[i*4]/255; rgb[i*3+1]=px[i*4+1]/255; rgb[i*3+2]=px[i*4+2]/255;
-      Lum[i]=.2126*rgb[i*3]+.7152*rgb[i*3+1]+.0722*rgb[i*3+2]; }
-    // edge map for wall growth
-    const edge=new Uint8Array(N);
-    for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;
-      const gx=Lum[i-W+1]+2*Lum[i+1]+Lum[i+W+1]-Lum[i-W-1]-2*Lum[i-1]-Lum[i+W-1];
-      const gy=Lum[i+W-1]+2*Lum[i+W]+Lum[i+W+1]-Lum[i-W-1]-2*Lum[i-W]-Lum[i-W+1];
-      edge[i]=Math.hypot(gx,gy)>.13?1:0;}
-    const S={W,H,rgb,edge};
-    await tick();
-
-    const aspect=H/W, gl=this.gl;
-    const surfaces=[];
-    const shadeRGB=new Float32Array(N*3), shadeA=new Float32Array(N), owner=new Float32Array(N);
-    for(const sd of room.surfaces){
-      // 1. coverage
-      let m=rasterPolys(W,H,sd.poly);
-      if(sd.grow){ const g=growMask(S,sd.grow,m); for(let i=0;i<N;i++) m[i]=Math.min(m[i],g[i]);
-        // close the thin rim of old wall left beside objects: take neighbouring pixels that really are wall-coloured
-        const wr=refColour(rgb,m,N), wl=.2126*wr[0]+.7152*wr[1]+.0722*wr[2], ws=wr[0]+wr[1]+wr[2]+1e-3;
-        for(let pass=0;pass<5;pass++){ const add=[];
-          for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x; if(m[i]>.5) continue;
-            if(!(m[i-1]>.5||m[i+1]>.5||m[i-W]>.5||m[i+W]>.5)) continue;
-            const r=rgb[i*3],g2=rgb[i*3+1],b=rgb[i*3+2],s=r+g2+b+1e-3;
-            if(Math.abs(r/s-wr[0]/ws)+Math.abs(g2/s-wr[1]/ws)<.025&&Math.abs(Lum[i]-wl)<.09) add.push(i);}
-          for(const i of add) m[i]=1; }
-      }
-      if(sd.holes){ const h=rasterPolys(W,H,sd.holes); for(let i=0;i<N;i++) m[i]*=1-h[i]; }
-      // reference colour = bright-ish median of the surface
-      let ref=refColour(rgb,m,N);
-      if(sd.keyAt){ // sample the key colour from points known to be the material itself
-        let r=0,g=0,b=0,n=0;
-        for(const [u,v] of sd.keyAt){ const cx=Math.round(u*(W-1)),cy=Math.round(v*(H-1));
-          for(let y=-3;y<=3;y++)for(let x=-3;x<=3;x++){const i=Math.min(H-1,Math.max(0,cy+y))*W+Math.min(W-1,Math.max(0,cx+x));r+=rgb[i*3];g+=rgb[i*3+1];b+=rgb[i*3+2];n++} }
-        ref=[r/n,g/n,b/n];
-      }
-      if(sd.fine){ // colour-keyed occluders: keep pixels that still look like the surface
-        const f=rasterPolys(W,H,sd.fine), rl=.2126*ref[0]+.7152*ref[1]+.0722*ref[2];
-        for(let i=0;i<N;i++) if(f[i]>0&&m[i]>0){
-          const r=rgb[i*3],g=rgb[i*3+1],b=rgb[i*3+2],L=Lum[i], s=r+g+b+1e-3, rs=ref[0]+ref[1]+ref[2]+1e-3;
-          const dc=Math.abs(r/s-ref[0]/rs)+Math.abs(g/s-ref[1]/rs);
-          const keep=dc<(sd.tol||.05)&&L>rl*.28&&L<rl*(sd.lmax||1.4);
-          if(!keep) m[i]=0;
-        }
-      }
-      await tick();
-      // 2. edge-aware refine
-      if(sd.guided!==false){
-        const q=guided(Lum,m,W,H,sd.r||3,sd.eps||4e-4);
-        for(let i=0;i<N;i++){ const v=q[i]; m[i]=v<=.25?0:v>=.75?1:(v-.25)*2; }
-      }
-      if(sd.clip!==false){ const hard=rasterPolys(W,H,sd.poly.map(p=>p)); for(let i=0;i<N;i++) m[i]*=Math.min(1,hard[i]*1.0001); }
-      // cut-outs win over edge snapping (white objects on white walls must not be painted)
-      if(sd.holes){ const h=rasterPolys(W,H,sd.holes); for(let i=0;i<N;i++) m[i]*=1-h[i]; }
-      // surfaces in front of this one (curtains over a wall) are removed by their real mask, not a polygon
-      for(const id of sd.minus||[]){ const o=surfaces.find(s=>s.id===id); if(o) for(let i=0;i<N;i++) m[i]*=1-o.maskBytes[i]/255; }
-      // a placed object (e.g. a new rug) only shows where its host surface is visible
-      const host=sd.intersect&&surfaces.find(s=>s.id===sd.intersect);
-      if(host) for(let i=0;i<N;i++) m[i]*=host.maskBytes[i]/255;
-      await tick();
-      if(host){ // shares the host's lighting
-        const maskBytes=new Uint8Array(N); for(let i=0;i<N;i++) maskBytes[i]=Math.round(m[i]*255);
-        const Hm=homography(sd.quad.img.map(([u,v])=>[u*W, v*(sd.quad.units==="w"?W:H)]), sd.quad.world);
-        surfaces.push({def:sd, id:sd.id, name:sd.name, type:sd.type, maskBytes, ref:host.ref, H:Hm, area:0});
-        continue;
-      }
-      // 3. lighting: masked normalised blur (removes old texture/grout, keeps light & shadow)
-      const R=Math.max(4,Math.round(W*(sd.blur||(sd.type==="floor"?.007:.011))));
-      const mm=new Float32Array(N); for(let i=0;i<N;i++) mm[i]=m[i]>.5?1:0;
-      const mB=blur3(mm,W,H,R);
-      const ch=[0,1,2].map(k=>{const a=new Float32Array(N);for(let i=0;i<N;i++)a[i]=rgb[i*3+k]*mm[i];return blur3(a,W,H,R)});
-      for(let i=0;i<N;i++) if(m[i]>owner[i]){
-        const w=mB[i]>1e-4?1/mB[i]:0; owner[i]=m[i];
-        const r=ch[0][i]*w,g=ch[1][i]*w,b=ch[2][i]*w; shadeRGB[i*3]=r;shadeRGB[i*3+1]=g;shadeRGB[i*3+2]=b;
-        const bl=.2126*r+.7152*g+.0722*b; shadeA[i]=bl>1e-3?Math.min(1,Lum[i]/bl*.5):.5;
-      }
-      // reference light = 70th percentile of the blurred surface colour
-      const lref=refColour(shadeRGB,mm,N,.7);
-      const maskBytes=new Uint8Array(N); for(let i=0;i<N;i++) maskBytes[i]=Math.round(m[i]*255);
-      const Hm=homography(sd.quad.img.map(([u,v])=>[u*W, v*(sd.quad.units==="w"?W:H)]), sd.quad.world);
-      surfaces.push({def:sd, id:sd.id, name:sd.name, type:sd.type, maskBytes, ref:lref, H:Hm, area:mm.reduce((a,b)=>a+b,0)/N});
-      await tick();
-    }
-    const shadeBytes=new Uint8Array(N*4);
-    for(let i=0;i<N;i++){ for(let k=0;k<3;k++) shadeBytes[i*4+k]=Math.round(Math.min(1,shadeRGB[i*3+k])*255); shadeBytes[i*4+3]=Math.round(shadeA[i]*255); }
-
+    const res=await this.compute({canvas:c,W,H,surfaces:room.surfaces});
+    const surfaces=res.surfaces.map((r,i)=>{const sd=room.surfaces[i];return {def:sd,id:sd.id,name:sd.name,type:sd.type,maskBytes:r.maskBytes,ref:r.ref,H:r.H,area:r.area}});
+    const shadeBytes=res.shadeBytes, gl=this.gl;
     // GL resources, kept per room so switching back is instant
     const st={id:room.id,W,H,photoCanvas:c,photoTex:this.tex(c),shadeTex:this.tex({data:shadeBytes,w:W,h:H}),surfaces};
     for(const s of surfaces) s.maskTex=this.tex({data:s.maskBytes,w:W,h:H},{fmt:gl.RED});
@@ -383,15 +433,7 @@ class Engine{
     return new ImageData(out,W,H);
   }
 }
-function refColour(rgb,m,N,pct=.7){
-  const L=[]; for(let i=0;i<N;i+=5) if(m[i]>.5) L.push([.2126*rgb[i*3]+.7152*rgb[i*3+1]+.0722*rgb[i*3+2],i]);
-  if(!L.length) return [.8,.8,.8];
-  L.sort((a,b)=>a[0]-b[0]);
-  const lo=Math.floor(L.length*(pct-.1)), hi=Math.max(lo+1,Math.floor(L.length*(pct+.1)));
-  let r=0,g=0,b=0; for(let k=lo;k<hi;k++){const i=L[k][1];r+=rgb[i*3];g+=rgb[i*3+1];b+=rgb[i*3+2];}
-  const n=hi-lo; return [r/n,g/n,b/n];
-}
-const tick=()=>new Promise(r=>setTimeout(r,0));
+
 
 window.Materia={Engine,Cam,homography};
 })();

@@ -27,7 +27,7 @@ async function setRoom(id,keepActive){
   S.room=r; S.outlines={};
   S.assign=S.per[id]||(S.per[id]=Object.fromEntries(Object.entries(r.start).map(([k,v])=>[k,mk(v)])));
   for(const c of [$("hover"),$("flash"),$("prev")]){c.width=engine.W;c.height=engine.H}
-  $("before").src=engine.photoCanvas.toDataURL("image/jpeg",.88);
+  $("before").src=r.src;                    // the original photo, same framing as the stage
   fitStage();
   await renderNow(false);
   load.classList.add("done");
