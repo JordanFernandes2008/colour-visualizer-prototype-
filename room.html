@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prototype — visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css">
+</head>
+<body class="room-page">
+
+<div class="cover" id="cover"><img alt="" id="coverImg"><div class="portal-t"><small>Entering</small><b id="coverName"></b></div></div>
+
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="logo" href="index.html" aria-label="prototype home">
+      <svg viewBox="0 0 20 24" fill="none"><path d="M2.5 23V10.5a7.5 7.5 0 0 1 15 0V23" stroke="currentColor" stroke-width="4"/></svg>
+      <span>prototype</span>
+    </a>
+    <nav class="menu" id="menu">
+      <div class="dd">
+        <button class="dd-btn" aria-expanded="false">Products <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4"/></svg></button>
+        <div class="dd-panel dd-list" id="ddProducts"></div>
+      </div>
+      <div class="dd">
+        <button class="dd-btn" aria-expanded="false">Solutions <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4"/></svg></button>
+        <div class="dd-panel dd-mega"><p class="mega-h">Shop by material</p><div class="mega-grid" id="ddSolutions"></div></div>
+      </div>
+      <a href="index.html#how">How it works</a>
+    </nav>
+    <a class="btn btn-dark nav-cta" href="index.html#rooms">All rooms</a>
+    <button class="burger" id="burger" aria-label="Open menu"><span></span><span></span></button>
+  </div>
+</header>
+<div class="sheet" id="sheet">
+  <div class="sheet-in">
+    <p class="mega-h">Room visualizers</p><div class="sheet-list" id="sheetList"></div>
+    <a class="btn btn-dark" href="index.html">Home</a>
+  </div>
+</div>
+
+<main class="rp">
+  <div class="wrap">
+    <div class="rp-head">
+      <div>
+        <a class="back" href="index.html#rooms">← All rooms</a>
+        <h1 class="rp-title"><span id="rpName">Room</span> visualizer</h1>
+        <p id="rpLine"></p>
+      </div>
+      <div class="rooms" id="rooms"></div>
+    </div>
+    <div class="app">
+      <div class="stage-col">
+        <div class="stage" id="stage">
+          <div class="stage-inner" id="stageInner">
+            <canvas class="gl" id="gl"></canvas>
+            <canvas class="ov hover" id="hover"></canvas>
+            <canvas class="ov flash" id="flash"></canvas>
+            <canvas class="ov prev" id="prev"></canvas>
+            <img class="before" id="before" alt="Original room">
+            <span class="tag l">Before</span><span class="tag r">After</span>
+            <div class="handle" id="handle"><button aria-label="Drag to compare"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l-6 6 6 6M15 6l6 6-6 6"/></svg></button></div>
+          </div>
+          <div class="hint off" id="hint"><span id="hintText"></span></div>
+          <div class="stage-load" id="stageLoad"><span></span></div>
+        </div>
+        <div class="toolbar">
+          <button class="tool" id="compareBtn" aria-pressed="false">Before / after</button>
+          <button class="tool" id="resetBtn">Reset room</button>
+          <button class="tool" id="saveBtn">Save image</button>
+          <span class="sp"></span>
+          <div class="applied" id="applied"></div>
+        </div>
+      </div>
+      <aside class="panel">
+        <div class="p-sec">
+          <p class="lbl"><b>1</b> Choose a surface <span>or tap it in the photo</span></p>
+          <div class="surfaces" id="surfaces"></div>
+        </div>
+        <div class="p-sec">
+          <p class="lbl"><b>2</b> Choose a category</p>
+          <div class="cats" id="cats"></div>
+        </div>
+        <p class="lbl prod-lbl"><b id="stepNo">3</b> Choose a product</p>
+        <div class="products" id="products"></div>
+        <div class="p-sec adjust" id="adjust" hidden>
+          <div><p class="lbl">Size</p><div class="row" id="sizes"></div></div>
+          <div><p class="lbl">Layout</p><div class="row" id="layouts"></div></div>
+          <div><p class="lbl">Grout</p><div class="row grout-row"><div class="row" id="gcols"></div><input type="range" id="gw" min="0" max="8" step=".5" aria-label="Grout width"><output id="gwOut"></output></div></div>
+          <label class="toggle" id="bookWrap">Bookmatch slabs <button class="switch" id="book" role="switch" aria-checked="false" aria-label="Bookmatch"></button></label>
+        </div>
+      </aside>
+    </div>
+  </div>
+</main>
+<footer class="foot"><span>prototype — demo build</span><span>Room photos: Unsplash · Timber: Poly Haven (CC0) · Stone, rugs and fabrics generated</span></footer>
+
+<script src="engine.js"></script>
+<script src="gen.js"></script>
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="room.js"></script>
+</body>
+</html>

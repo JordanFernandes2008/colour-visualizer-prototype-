@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Urbanist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="site.css">
+</head>
+<body class="is-loading">
+
+<!-- intro -->
+<div class="intro" id="intro" aria-hidden="true">
+  <div class="hi" id="hi">hi</div>
+  <p class="intro-line" id="introLine"><span>this</span> <span>is</span> <span>our</span> <span>prototype</span></p>
+  <div class="intro-bar"><i id="introBar"></i></div>
+  <button class="intro-skip" id="introSkip">Skip</button>
+</div>
+
+<!-- nav -->
+<header class="nav" id="nav">
+  <div class="nav-in">
+    <a class="logo" href="#top" aria-label="prototype home">
+      <svg viewBox="0 0 20 24" fill="none"><path d="M2.5 23V10.5a7.5 7.5 0 0 1 15 0V23" stroke="currentColor" stroke-width="4"/></svg>
+      <span>prototype</span>
+    </a>
+    <nav class="menu" id="menu">
+      <div class="dd" data-dd="products">
+        <button class="dd-btn" aria-expanded="false">Products <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4"/></svg></button>
+        <div class="dd-panel dd-list" id="ddProducts"></div>
+      </div>
+      <div class="dd" data-dd="solutions">
+        <button class="dd-btn" aria-expanded="false">Solutions <svg viewBox="0 0 10 6"><path d="M1 1l4 4 4-4"/></svg></button>
+        <div class="dd-panel dd-mega"><p class="mega-h">Shop by material</p><div class="mega-grid" id="ddSolutions"></div></div>
+      </div>
+      <a href="#how">How it works</a>
+      <a href="#contact">Contact</a>
+    </nav>
+    <a class="btn btn-dark nav-cta" href="#rooms">Try for free</a>
+    <button class="burger" id="burger" aria-label="Open menu"><span></span><span></span></button>
+  </div>
+</header>
+<div class="sheet" id="sheet">
+  <div class="sheet-in">
+    <p class="mega-h">Room visualizers</p><div class="sheet-list" id="sheetList"></div>
+    <a class="btn btn-dark" href="#rooms" data-close>Try for free</a>
+  </div>
+</div>
+
+<main id="top">
+  <!-- hero -->
+  <section class="hero" id="hero">
+    <div class="hero-media" id="heroMedia">
+      <img id="heroA" alt="">
+      <img id="heroB" alt="" class="next">
+    </div>
+    <div class="hero-veil"></div>
+    <div class="hero-copy">
+      <h1><span class="ln"><span>Show it in their room</span></span><span class="ln"><span>before it’s in their room.</span></span></h1>
+      <p>Stones, tiles, wallpapers, panels, paints, curtains, rugs and furniture — previewed in real rooms at true scale, with the room’s own light.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-light mag" href="#contact">Book demo</a>
+        <a class="btn btn-dark mag" href="#rooms">Try our visualizer</a>
+      </div>
+    </div>
+    <div class="now" id="now"><i class="now-sw"></i><div><small>Now showing</small><b id="nowText">—</b></div><svg class="now-ring" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle id="nowProg" cx="12" cy="12" r="10" pathLength="1"/></svg></div>
+    <a class="hero-down" href="#store">Walk the store <span></span></a>
+  </section>
+
+  <!-- the store -->
+  <section class="store" id="store">
+    <div class="store-pin">
+      <div class="store-head">
+        <h2 class="rise">Walk the store.</h2>
+        <p>Five rooms, every product shown in place. Scroll to walk through.</p>
+        <div class="aisle-meter"><span id="aisleNo">01</span><div class="meter"><i id="meter"></i></div><span>05</span></div>
+      </div>
+      <div class="track" id="track"></div>
+    </div>
+  </section>
+
+  <!-- pick a room -->
+  <section class="pick" id="rooms">
+    <div class="wrap">
+      <div class="viz-head">
+        <h2 class="rise">Step into a room.</h2>
+        <p>Every room has its own visualizer. Choose one and walk in.</p>
+      </div>
+      <div class="doors" id="doors"></div>
+    </div>
+  </section>
+
+  <!-- how -->
+  <section class="how" id="how">
+    <div class="wrap">
+      <h2 class="rise">How it works</h2>
+      <div class="steps">
+        <article class="step"><div class="step-media" id="step1"></div><span>01</span><h3>Pick a room</h3><p>A ready room, or a photo of the customer’s own space.</p></article>
+        <article class="step"><div class="step-media" id="step2"></div><span>02</span><h3>Choose a product</h3><p>Floors, walls, curtains, rugs and furniture are detected separately.</p></article>
+        <article class="step"><div class="step-media ba" id="step3"><img alt=""><img alt=""></div><span>03</span><h3>See it instantly</h3><p>Light, shadow and perspective stay true. Save it, share it, sell it.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta" id="contact">
+    <div class="cta-in">
+      <h2>Bring <em>prototype</em> to your showroom.</h2>
+      <p>On your website, in-store on a tablet, and in your sales team’s pocket.</p>
+      <a class="btn btn-light mag" href="#top">Book demo</a>
+    </div>
+  </section>
+</main>
+<footer class="foot"><span>prototype — demo build</span><span>Room photos: Unsplash · Timber: Poly Haven (CC0) · Stone, rugs and fabrics generated</span></footer>
+
+<div class="cursor" id="cursor">Step in</div>
+
+<script src="engine.js"></script>
+<script src="gen.js"></script>
+<script src="data.js"></script>
+<script src="core.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
