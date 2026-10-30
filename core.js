@@ -38,7 +38,7 @@ async function matSource(p,rd){
   if(srcCache.has(key)) return srcCache.get(key);
   const sp=p.src||{};
   // concurrent callers share one generation
-  const job=(async()=>{ if(!sp.img) await slot(); let s=null;
+  const job=(async()=>{ let s=null;          // textures a click asks for go straight through; only swatches queue
   if(sp.img) s=await loadImg(sp.img);
   else if(sp.bake) s=G.bake(sp.bake);
   else if(sp.terrazzo) s=G.terrazzo(sp.terrazzo);
@@ -146,6 +146,8 @@ function buildNav(onRoom){
   });
   document.addEventListener("click",e=>{if(!e.target.closest(".dd"))document.querySelectorAll(".dd").forEach(o=>o.classList.remove("open"))});
   $("burger").onclick=()=>document.body.classList.toggle("sheet-open");
+  // any link in the phone menu closes it (same-page anchors would otherwise land under the open sheet)
+  $("sheet").addEventListener("click",e=>{ if(e.target.closest("a")) document.body.classList.remove("sheet-open"); });
   let last=0; addEventListener("scroll",()=>{const y=scrollY; $("nav").classList.toggle("hide",y>last&&y>400&&!document.body.classList.contains("sheet-open")); last=y},{passive:true});
 }
 
